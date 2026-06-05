@@ -1,0 +1,19 @@
+# research/.gitignore
+
+# Python bytecode & cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local experiment telemetry outputs (Keep your repo clean!)
+*.png
+baseline_matrix_weights.json
+
+# Virtual environments (if you use them locally)
+venv/
+.venv/
+env/
+
+# IDE files
+.vscode/
+.idea/
