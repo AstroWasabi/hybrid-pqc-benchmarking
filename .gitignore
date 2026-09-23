@@ -7,7 +7,7 @@ __pycache__/
 
 # Local experiment telemetry outputs (Keep your repo clean!)
 *.png
-baseline_matrix_weights.json
+outputs/first_run_base/baseline_matrix_weights_base.json
 
 # Virtual environments (if you use them locally)
 venv/
@@ -17,3 +17,9 @@ env/
 # IDE files
 .vscode/
 .idea/
+
+# Native C build artifacts
+c/server
+c/bench_baselines
+c/bench_hybrid
+*.o
