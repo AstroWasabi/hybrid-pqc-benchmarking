@@ -1,4 +1,4 @@
-# pqc-benchmarking/config/algorithms.py
+# config/algorithms.py
 
 ALGORITHM_COMBOS = [
     # --- HYBRID PROFILES ---
@@ -22,6 +22,10 @@ ALGORITHM_COMBOS = [
     {
         "id": 5, "label": "Pure Classical: SecP256r1", "profile": "pure_classical",
         "pqc_name": None, "classical_name": "P256", "info": b"Pure-Classical-P256-v1"
+    },
+    {
+        "id": 8, "label": "Pure Classical: SecP384r1", "profile": "pure_classical",
+        "pqc_name": None, "classical_name": "P384", "info": b"Pure-Classical-P384-v1"
     },
     # --- PURE QUANTUM BASELINES ---
     {

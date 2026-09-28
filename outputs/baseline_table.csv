@@ -1,0 +1,6 @@
+Algorithm,Profile,Stable Cost (ms)
+X25519,Pure Classical,0.529
+P256,Pure Classical,0.981
+P384,Pure Classical,3.595
+ML-KEM-768,Pure Quantum,2.231
+ML-KEM-1024,Pure Quantum,2.921

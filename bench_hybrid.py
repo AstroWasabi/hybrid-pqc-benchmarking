@@ -1,4 +1,4 @@
-# research/bench_hybrid.py
+# bench_hybrid.py
 import json
 import os
 from config.algorithms import ALGORITHM_COMBOS
@@ -33,6 +33,14 @@ def load_trained_cost_model():
 def run_hybrid_track(hybrid_combos, kdf_engine_name, predictor):
     print(f"\n--- Activating Hybrid Execution Phase: {kdf_engine_name.upper()} ---")
     track_results = []
+    summary_table_rows = []
+
+    # Try loading raw baseline file for local drift computation
+    try:
+        with open("baseline_matrix_weights.json", "r") as f:
+            weights = json.load(f)
+    except FileNotFoundError:
+        weights = {}
 
     for combo in hybrid_combos:
         print(f"[*] Benchmarking: {combo['label']} via {kdf_engine_name.upper()}...")
@@ -45,7 +53,26 @@ def run_hybrid_track(hybrid_combos, kdf_engine_name, predictor):
             # Pack results for plot visualizer
             track_results.append({"label": combo["label"], "raw_runs": raw_runs})
 
-            # Execute cost model analytics if baseline weights are present
+            # Calculate standard deviation jitter omitting iteration 0
+            steady_state = raw_runs[1:]
+            n = len(steady_state)
+            if n > 0:
+                emp_avg = sum(steady_state) / n
+                variance = sum((x - emp_avg) ** 2 for x in steady_state) / n
+                sd = variance ** 0.5
+            else:
+                emp_avg, sd = 0.0, 0.0
+
+            # Calculate predictive baseline drift values (c_cost + q_cost + calibrated KDF cost)
+            c_cost = weights.get(combo["classical_name"], {}).get("stable_cost_ms", 0.0)
+            q_cost = weights.get(combo["pqc_name"], {}).get("stable_cost_ms", 0.0)
+            kdf_cost = predictor.kdf_weights.get(kdf_engine_name.lower(), 0.0) if predictor else 0.0
+            predicted = c_cost + q_cost + kdf_cost
+            drift = emp_avg - predicted if predicted > 0 else 0.0
+
+            lbl = combo["label"].replace("Hybrid: ", "")
+            summary_table_rows.append((lbl, kdf_engine_name.upper(), emp_avg, sd, drift))
+
             if predictor:
                 predicted_val = predictor.predict_hybrid_performance(
                     classical_name=combo["classical_name"],
@@ -56,20 +83,27 @@ def run_hybrid_track(hybrid_combos, kdf_engine_name, predictor):
 
                 print(f"    -> Empirical Avg: {stats['avg']:.3f} ms")
                 print(f"    -> Predicted Avg: {predicted_val:.3f} ms")
-                print(
-                    f"    -> Model Accuracy: {accuracy_report['accuracy_percentage']:.2f}% (Error: {accuracy_report['absolute_error_ms']:.3f} ms)")
+                print(f"    -> Model Accuracy: {accuracy_report['accuracy_percentage']:.2f}% (Error: {accuracy_report['absolute_error_ms']:.3f} ms)")
             else:
                 print(f"    -> Empirical Avg: {stats['avg']:.3f} ms | Jitter: {stats['jitter']:.3f} ms")
 
         except Exception as e:
             print(f" [!] Error processing hybrid combination {combo['label']}: {e}")
 
+    # --- PRINT TRACK MATRIX TABLE ---
+    print("\n" + "=" * 80)
+    print(f"{'Hybrid Profile':<24} | {'KDF':<6} | {'Empirical(ms)':<13} | {'SD Jitter':<10} | {'Drift (Δ)':<10}")
+    print("-" * 80)
+    for row in summary_table_rows:
+        print(f"{row[0]:<24} | {row[1]:<6} | {row[2]:<13.3f} | {row[3]:<10.3f} | {row[4]:+10.3f}")
+    print("=" * 80 + "\n")
+
     # Send values directly to our custom visualizer module to draw high-density subplots
     visualizer.generate_density_timeline(track_results, kdf_engine_name, NUM_RUNS)
 
 
 def main():
-    print(f"=== Initiating Hybrid Core Performance Matrix Evaluation ===")
+    print(f"=== Initiating Upgraded Hybrid Core Performance Matrix Evaluation ===")
 
     # Isolate only hybrid combos
     hybrid_combos = [c for c in ALGORITHM_COMBOS if c["profile"] == "hybrid"]

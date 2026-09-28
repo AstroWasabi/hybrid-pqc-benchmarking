@@ -1,4 +1,4 @@
-# research/core/network_client.py
+# core/network_client.py
 import socket
 import time
 import oqs
@@ -10,22 +10,24 @@ from core.crypto_engine import (
     b64e, b64d, send_json, recv_json,
 )
 
-PORT = 4443
+PORT = 4444
 STATIC_SALT = b"IEICE-Kyoto-Conference-2026"
 
 
 def execute_handshake(host: str, combo: dict, kdf_type: str) -> float:
     """
     Executes a single cryptographic handshake over a network socket.
-    Returns the total execution duration in milliseconds (ms).
+    Returns the core handshake execution duration in milliseconds (ms),
+    isolating latency measurement from TCP socket connection establishment overhead.
     """
     # Only supply a salt if we are running the legacy hybrid SHA-256 track
     current_salt = STATIC_SALT if combo["profile"] == "hybrid" and kdf_type == "sha256" else None
 
-    wall_start = time.perf_counter()
-
     with socket.create_connection((host, PORT)) as sock:
         fh = sock.makefile("rwb", buffering=0)
+
+        # Start timing AFTER TCP socket connection is fully established
+        wall_start = time.perf_counter()
 
         # 1. Negotiate profile and setup parameters
         setup_payload = {
@@ -65,5 +67,7 @@ def execute_handshake(host: str, combo: dict, kdf_type: str) -> float:
         # Await final handshake verification confirmation from the server
         recv_json(fh)
 
-    # Calculate final elapsed wall-clock delta converted straight to ms
-    return (time.perf_counter() - wall_start) * 1000
+        # End timing immediately after receiving server finished signal
+        elapsed_ms = (time.perf_counter() - wall_start) * 1000
+
+    return elapsed_ms

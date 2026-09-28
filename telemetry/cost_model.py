@@ -1,4 +1,9 @@
-# research/telemetry/cost_model.py
+# telemetry/cost_model.py
+import time
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+import blake3
+
 
 class PredictiveCostModel:
     def __init__(self):
@@ -9,12 +14,57 @@ class PredictiveCostModel:
         self.classical_costs = {}
         self.pqc_costs = {}
 
-        # Microbenchmarked KDF execution delta weights on local bare-metal loops
-        # (Can be dynamically adjusted based on isolated micro-testing profiles)
+        # Default fallbacks
         self.kdf_weights = {
-            "sha256": 0.05,  # Measured overhead baseline in ms
-            "blake3": 0.01  # Measured parallel SIMD overhead baseline in ms
+            "sha256": 0.05,
+            "blake3": 0.01
         }
+
+        # Dynamically calibrate KDF costs based on host CPU speed
+        self.calibrate_kdf_weights()
+
+    def calibrate_kdf_weights(self, num_iterations: int = 500):
+        """
+        Microbenchmarks the actual cryptographic overhead of HKDF-SHA256 and BLAKE3
+        key derivations on the local system hardware.
+        """
+        # Set up realistic-sized dummy inputs
+        classical_secret = b"\x00" * 32
+        pqc_secret = b"\x00" * 32
+        combined_input = classical_secret + pqc_secret
+        info_label = b"Calibration-Info-Label-v1"
+        salt = b"Calibration-Salt-v1"
+
+        try:
+            # 1. Benchmark SHA-256 HKDF
+            t0 = time.perf_counter()
+            for _ in range(num_iterations):
+                hkdf = HKDF(
+                    algorithm=hashes.SHA256(),
+                    length=32,
+                    salt=salt,
+                    info=info_label,
+                )
+                _ = hkdf.derive(combined_input)
+            t1 = time.perf_counter()
+            sha256_avg_ms = ((t1 - t0) / num_iterations) * 1000
+
+            # 2. Benchmark BLAKE3
+            t0 = time.perf_counter()
+            for _ in range(num_iterations):
+                hasher = blake3.blake3()
+                hasher.update(info_label)
+                hasher.update(combined_input)
+                _ = hasher.digest(length=32)
+            t1 = time.perf_counter()
+            blake3_avg_ms = ((t1 - t0) / num_iterations) * 1000
+
+            self.kdf_weights["sha256"] = sha256_avg_ms
+            self.kdf_weights["blake3"] = blake3_avg_ms
+            print(f"[Model Matrix] Calibrated local KDF execution -> SHA-256: {sha256_avg_ms:.5f} ms | BLAKE3: {blake3_avg_ms:.5f} ms")
+
+        except Exception as e:
+            print(f"[!] Warning: KDF dynamic calibration failed, reverting to defaults. Reason: {e}")
 
     def register_baseline_cost(self, algorithm_label: str, profile_type: str, stable_cost_ms: float):
         """
@@ -24,6 +74,11 @@ class PredictiveCostModel:
         if profile_type == "pure_classical":
             # Map clean name (e.g., 'X25519') to its isolated hardware speed
             name = algorithm_label.replace("Pure Classical: ", "").strip()
+            # Normalize names to match classical_name values (e.g., "SecP256r1" -> "P256")
+            if "SecP256r1" in name or name == "P256":
+                name = "P256"
+            elif "SecP384r1" in name or name == "P384":
+                name = "P384"
             self.classical_costs[name] = stable_cost_ms
             print(f"[Model Matrix] Registered Classical Baseline -> {name}: {stable_cost_ms:.3f} ms")
 

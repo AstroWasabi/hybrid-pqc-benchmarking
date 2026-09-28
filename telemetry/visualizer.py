@@ -1,4 +1,4 @@
-# research/telemetry/visualizer.py
+# telemetry/visualizer.py
 import matplotlib.pyplot as plt
 
 
@@ -6,6 +6,7 @@ def generate_density_timeline(results: list, engine_name: str, num_runs: int):
     """
     Generates a high-density, stacked subplot grid for 1,000 iterations.
     Enforces a strict uniform Y-axis range across distinct KDF test configurations.
+    Saves visualization outputs cleanly.
     """
     num_plots = len(results)
     fig, axes = plt.subplots(num_plots, 1, figsize=(14, 2 * num_plots), sharex=True)
@@ -17,8 +18,8 @@ def generate_density_timeline(results: list, engine_name: str, num_runs: int):
         ax = axes[idx] if num_plots > 1 else axes
         ax.plot(iterations, r["raw_runs"], color=colors[idx % len(colors)], linewidth=0.5, alpha=0.7, label=r["label"])
 
-        # Enforce uniform vertical grid limits to capture true relative differences
-        ax.set_ylim(0, 18)
+        # Enforce a tighter vertical limit since network connection establishment is isolated
+        ax.set_ylim(0, 12)
 
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, linestyle=":", alpha=0.4)

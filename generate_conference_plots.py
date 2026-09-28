@@ -1,4 +1,4 @@
-# research/generate_conference_plots.py
+# generate_conference_plots.py
 import json
 import os
 import numpy as np
@@ -59,12 +59,14 @@ def plot_option2_residual(data):
     ax.stem(x - 0.15, data["sha_err"], linefmt="C0-", markerfmt="C0o", label="SHA-256 Model Drift")
     ax.stem(x + 0.15, data["blake_err"], linefmt="C1-", markerfmt="C1o", label="BLAKE3 Model Drift")
 
-    ax.set_ylabel("Prediction Error Delta ($\Delta$ ms)\n[Positive = Real World was Slower]", fontsize=11,
+    ax.set_ylabel(r"Prediction Error Delta ($\Delta$ ms)", fontsize=11,
                   fontweight="bold")
-    ax.set_title("Cost Model Residual Analysis\n(Isolating Pure Systemic & Context-Switching Overhead)", fontsize=13,
-                 fontweight="bold", pad=15)
+    ax.set_title("Cost Model Accuracy Analysis", fontsize=13,
+                  fontweight="bold", pad=15)
     ax.set_xticks(x)
     ax.set_xticklabels(data["labels"], fontsize=10, fontweight="bold")
+    ax.set_ylim(-0.8, 3.2)
+    ax.set_xlim(-0.5, 2.5)
     ax.grid(True, linestyle=":", alpha=0.5)
     ax.legend(loc="upper left")
 
@@ -78,8 +80,10 @@ def plot_option2_residual(data):
                     fontsize=9, fontweight='bold', color='C1')
 
     plt.tight_layout()
-    plt.savefig("conference_option2_residual.png", dpi=300)
+    filename = "conference_option2_residual.png"
+    plt.savefig(filename, dpi=300)
     plt.close()
+    print(f"[*] Saved Option 2 Residual plot: {filename}")
 
 
 def plot_option3_dual_axis(data):
@@ -97,7 +101,7 @@ def plot_option3_dual_axis(data):
     ax1.set_ylabel('Empirical Handshake Latency (ms)', fontsize=11, fontweight='bold', color='black')
     ax1.set_xticks(x)
     ax1.set_xticklabels(data["labels"], fontsize=10, fontweight='bold')
-    ax1.set_ylim(0, 8)
+    ax1.set_ylim(0, 12)
     ax1.grid(axis='y', linestyle=':', alpha=0.5)
 
     # Right Axis: Trend lines for Model Accuracy Percentages
@@ -122,16 +126,18 @@ def plot_option3_dual_axis(data):
         ax2.annotate(f'{data["blake_acc"][i]:.1f}%', xy=(i + width / 2, data["blake_acc"][i]), xytext=(0, 8),
                      textcoords="offset points", ha='center', fontsize=9, fontweight='bold', color='#2ca02c')
 
-    plt.title("Empirical Handshake Performance vs. Predictive Model Verification Matrix", fontsize=13,
+    plt.title("Empirical Handshake Performance vs. Predictive Model Verification", fontsize=13,
               fontweight='bold', pad=20)
     plt.tight_layout()
-    plt.savefig("conference_option3_dual_axis.png", dpi=300)
+    filename = "conference_option3_dual_axis.png"
+    plt.savefig(filename, dpi=300)
     plt.close()
+    print(f"[*] Saved Option 3 Dual-Axis plot: {filename}")
 
 
 def main():
     if not os.path.exists("baseline_matrix_weights.json"):
-        print("[!] Missing weights configuration. Run bench_baselines.py first.")
+        print("[!] Missing baseline_matrix_weights.json configuration. Run bench_baselines.py first.")
         return
 
     with open("baseline_matrix_weights.json", "r") as f:

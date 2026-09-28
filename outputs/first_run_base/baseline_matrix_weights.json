@@ -1,0 +1,22 @@
+{
+    "X25519": {
+        "label": "Pure Classical: X25519",
+        "profile": "pure_classical",
+        "stable_cost_ms": 0.553951895160897
+    },
+    "P256": {
+        "label": "Pure Classical: SecP256r1",
+        "profile": "pure_classical",
+        "stable_cost_ms": 0.9220267801701247
+    },
+    "ML-KEM-768": {
+        "label": "Pure Quantum: ML-KEM-768",
+        "profile": "pure_quantum",
+        "stable_cost_ms": 3.6252192160985373
+    },
+    "ML-KEM-1024": {
+        "label": "Pure Quantum: ML-KEM-1024",
+        "profile": "pure_quantum",
+        "stable_cost_ms": 4.759454894605819
+    }
+}

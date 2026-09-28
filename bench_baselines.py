@@ -1,4 +1,4 @@
-# research/bench_baselines.py
+# bench_baselines.py
 import json
 from config.algorithms import ALGORITHM_COMBOS
 from core.network_client import execute_handshake
@@ -53,9 +53,28 @@ def main():
         json.dump(model_training_data, f, indent=4)
     print("\n[✔] Baseline weight values successfully compiled to: baseline_matrix_weights.json")
 
+    # --- PRINT BASELINES TABLE ---
+    print("\n" + "=" * 55)
+    print(f"{'Algorithm Baseline':<25} | {'Stable Cost (ms)':<16} | {'Jitter (ms)':<10}")
+    print("-" * 55)
+    for algo_key, data in model_training_data.items():
+        lbl = data["label"].replace("Pure Classical: ", "").replace("Pure Quantum: ", "")
+        match_stats = next((s for s in baseline_results if s["label"] == lbl), None)
+        jitter = match_stats["raw_runs"] if match_stats else []
+
+        if len(jitter) > 1:
+            avg = data["stable_cost_ms"]
+            v = sum((x - avg) ** 2 for x in jitter[1:]) / (len(jitter) - 1)
+            sd = v ** 0.5
+        else:
+            sd = 0.0
+
+        print(f"{algo_key:<25} | {data['stable_cost_ms']:<16.3f} | {sd:<10.3f}")
+    print("=" * 55)
+
     # --- GENERATE ISOLATED BASELINES VISUALIZATION ---
-    print("[*] Spooling baseline timeline data graphics...")
-    visualizer.generate_density_timeline(baseline_results, "baselines", NUM_RUNS)
+    print("\n[*] Spooling baseline timeline data graphics...")
+    visualizer.generate_density_timeline(baseline_results, "baseline", NUM_RUNS)
 
 
 if __name__ == "__main__":
