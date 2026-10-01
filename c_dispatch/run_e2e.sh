@@ -33,7 +33,10 @@ echo ""
 
 # ─── Step 1: Kill any lingering server ───────────────────────────
 echo "[1/5] Killing any lingering server on port 4444..."
-kill $(lsof -ti tcp:4444) 2>/dev/null || true
+PID=$(lsof -ti tcp:4444 2>/dev/null || true)
+if [ -n "$PID" ]; then
+    kill -9 $PID 2>/dev/null || true
+fi
 sleep 1
 
 # ─── Step 2: Build ───────────────────────────────────────────────

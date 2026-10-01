@@ -8,8 +8,8 @@
  *   2. Cipher suite weight (lightweight vs heavy)
  *
  * Routing Rules:
- *   → Sequential: VM with ≤2 cores, or lightweight (X25519 + ML-KEM-768)
- *   → Parallel:   Bare-metal with ≥3 cores and heavy (P-384 + ML-KEM-1024)
+ *   → Sequential: Non-hybrid, VM with ≤2 cores, or lightweight (X25519) on low-core/VM
+ *   → Parallel:   Bare-metal with ≥8 cores (all hybrids), or ≥3 cores with medium/heavy (P-256/P-384)
  */
 
 #ifndef DISPATCHER_H

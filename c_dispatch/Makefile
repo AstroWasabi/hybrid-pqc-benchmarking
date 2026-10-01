@@ -100,13 +100,16 @@ ALL_COMMON := $(DISPATCH_OBJS) $(BLAKE3_OBJS) $(CJSON_OBJS)
 # ─── Targets ───────────────────────────────────────────────────
 .PHONY: all clean
 
-all: server bench_e2e benchmark_suite
+all: server bench_e2e benchmark_suite bench_level5 bench_level5_demo bench_prims
 	@echo ""
 	@echo "═══════════════════════════════════════════════════════"
 	@echo "  Build complete:"
 	@echo "    ./server           — Adaptive Dispatch TLS Server"
 	@echo "    ./bench_e2e        — End-to-End Network Benchmark"
 	@echo "    ./benchmark_suite  — Local (no-network) Benchmark"
+	@echo "    ./bench_level5     — NIST Level 5 Benchmark"
+	@echo "    ./bench_level5_demo — Level 5 Demo Benchmark"
+	@echo "    ./bench_prims      — Cryptographic Primitives Benchmark"
 	@echo "═══════════════════════════════════════════════════════"
 
 server: server.o $(ALL_COMMON)
@@ -118,9 +121,18 @@ bench_e2e: bench_e2e.o client.o $(ALL_COMMON)
 benchmark_suite: benchmark_suite.o $(ALL_COMMON)
 	$(CC) -o $@ $^ $(LDFLAGS)
 
+bench_level5: bench_level5.o $(ALL_COMMON)
+	$(CC) -o $@ $^ $(LDFLAGS)
+
+bench_level5_demo: bench_level5_demo.o $(ALL_COMMON)
+	$(CC) -o $@ $^ $(LDFLAGS)
+
+bench_prims: bench_prims.o
+	$(CC) -o $@ $^ $(LDFLAGS)
+
 clean:
-	rm -f server bench_e2e benchmark_suite
-	rm -f *.o src/*.o
+	rm -f server bench_e2e benchmark_suite bench_level5 bench_level5_demo bench_prims
+	rm -f *.o src/*.o $(BLAKE3_DIR)/*.o $(CJSON_DIR)/*.o
 	rm -f host_profile.json benchmark_results.json e2e_benchmark_results.json
 	rm -f benchmark_output.log e2e_output.log server.log
 	@echo "Cleaned."

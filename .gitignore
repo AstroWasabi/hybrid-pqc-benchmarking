@@ -24,6 +24,7 @@ c/bench_baselines
 c/bench_hybrid
 c_dispatch/benchmark_suite
 c_dispatch/bench_e2e
+c_dispatch/bench_level5
 c_dispatch/bench_level5_demo
 c_dispatch/bench_prims
 c_dispatch/server
@@ -31,3 +32,5 @@ c_dispatch/server
 *.log
 c_dispatch/*.log
 c_dispatch/host_profile.json
+.clangd
+compile_commands.json

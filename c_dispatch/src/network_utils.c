@@ -139,3 +139,38 @@ int json_get_int(cJSON *obj, const char *key, int def)
     if (!item || !cJSON_IsNumber(item)) return def;
     return (int)item->valuedouble;
 }
+
+double json_get_double(cJSON *obj, const char *key, double def)
+{
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
+    if (!item || !cJSON_IsNumber(item)) return def;
+    return item->valuedouble;
+}
+
+/* -----------------------------------------------------------------------
+ * Binary framing helpers
+ * ----------------------------------------------------------------------- */
+
+int send_all(int fd, const void *buf, size_t len)
+{
+    size_t total = 0;
+    const uint8_t *p = (const uint8_t *)buf;
+    while (total < len) {
+        ssize_t n = write(fd, p + total, len - total);
+        if (n <= 0) return -1;
+        total += (size_t)n;
+    }
+    return 0;
+}
+
+int recv_all(int fd, void *buf, size_t len)
+{
+    size_t total = 0;
+    uint8_t *p = (uint8_t *)buf;
+    while (total < len) {
+        ssize_t n = read(fd, p + total, len - total);
+        if (n <= 0) return -1;
+        total += (size_t)n;
+    }
+    return 0;
+}

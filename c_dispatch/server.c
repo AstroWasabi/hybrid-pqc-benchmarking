@@ -25,6 +25,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdio.h>
@@ -125,6 +126,208 @@ static const char *dmode_str(DispatchMode m)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ * Binary Wire Protocol Handler (RFC 8446 / RFC 9954 Framing)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+static void *handle_client_binary(int fd, const WireHeader *hdr_first, struct timespec t0)
+{
+    int combo_id = ntohs(hdr_first->combo_id);
+    const AlgoCombo *combo = get_combo_by_id(combo_id);
+    if (!combo) { close(fd); return NULL; }
+
+    ClientHelloMeta ch_meta;
+    if (recv_all(fd, &ch_meta, sizeof(ch_meta)) != 0) { close(fd); return NULL; }
+
+    uint16_t cli_pub_len = ch_meta.c_pub_len;
+    uint8_t cli_pub_buf[MAX_PUB_KEY_BYTES];
+    if (cli_pub_len > 0) {
+        if (cli_pub_len > sizeof(cli_pub_buf) ||
+            recv_all(fd, cli_pub_buf, cli_pub_len) != 0) {
+            close(fd); return NULL;
+        }
+    }
+
+    const char *kdf_type = (ch_meta.kdf_type == 1) ? "blake3" : "sha256";
+    DispatchMode dmode = (ch_meta.dispatch_mode == 1) ? DMODE_FORCE_SEQUENTIAL :
+                         (ch_meta.dispatch_mode == 2) ? DMODE_FORCE_PARALLEL : DMODE_AUTO;
+    DispatchRoute route = ROUTE_SEQUENTIAL;
+
+    /* PQC Keygen */
+    OQS_KEM *kem = NULL;
+    uint8_t *q_pk = NULL;
+    uint8_t *q_sk = NULL;
+    uint32_t pqc_pk_len = 0;
+
+    if (combo->profile == PROFILE_HYBRID || combo->profile == PROFILE_PURE_QUANTUM) {
+        kem = OQS_KEM_new(combo->pqc_name);
+        if (!kem) { close(fd); return NULL; }
+        q_pk = malloc(kem->length_public_key);
+        q_sk = malloc(kem->length_secret_key);
+        if (!q_pk || !q_sk || OQS_KEM_keypair(kem, q_pk, q_sk) != OQS_SUCCESS) {
+            free(q_pk); free(q_sk); if (kem) OQS_KEM_free(kem);
+            close(fd); return NULL;
+        }
+        pqc_pk_len = (uint32_t)kem->length_public_key;
+    }
+
+    /* Classical Key Exchange */
+    uint8_t c_secret[MAX_SHARED_SEC] = {0};
+    size_t c_secret_len = 0;
+    uint8_t srv_pub_buf[MAX_PUB_KEY_BYTES] = {0};
+    size_t srv_pub_len = 0;
+    EVP_PKEY *srv_priv = NULL;
+
+    if (combo->profile == PROFILE_HYBRID || combo->profile == PROFILE_PURE_CLASSICAL) {
+        srv_priv = crypto_generate_keypair(combo->classical_curve);
+        if (!srv_priv) {
+            free(q_pk); free(q_sk); if (kem) OQS_KEM_free(kem);
+            close(fd); return NULL;
+        }
+        if (combo->classical_curve == CURVE_X25519) {
+            crypto_export_x25519_pub_raw(srv_priv, srv_pub_buf, &srv_pub_len);
+        } else {
+            crypto_export_ec_pub_der(srv_priv, srv_pub_buf, &srv_pub_len);
+        }
+
+        if (cli_pub_len > 0) {
+            EVP_PKEY *cli_pub = (combo->classical_curve == CURVE_X25519)
+                ? crypto_load_x25519_pub_raw(cli_pub_buf, (size_t)cli_pub_len)
+                : crypto_load_ec_pub_der(cli_pub_buf, (size_t)cli_pub_len);
+            if (cli_pub) {
+                c_secret_len = sizeof(c_secret);
+                crypto_derive_ecdh_secret(srv_priv, cli_pub, c_secret, &c_secret_len);
+                EVP_PKEY_free(cli_pub);
+            }
+        }
+    }
+
+    /* Set TCP_NODELAY on socket */
+    int nodelay = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+    /* Send ServerHello in a single contiguous write to prevent TCP delayed-ACK */
+    ServerHelloMeta sh_meta = {
+        .dispatch_route = (route == ROUTE_PARALLEL) ? 1 : 0,
+        .reserved       = 0,
+        .srv_pub_len    = (uint16_t)srv_pub_len,
+        .pqc_pk_len     = pqc_pk_len
+    };
+    WireHeader sh_hdr = {
+        .magic       = htonl(WIRE_MAGIC),
+        .msg_type    = htons(WIRE_MSG_SERVER_HELLO),
+        .combo_id    = htons(combo->id),
+        .payload_len = htonl(sizeof(sh_meta) + srv_pub_len + pqc_pk_len)
+    };
+
+    size_t total_sh = sizeof(sh_hdr) + sizeof(sh_meta) + srv_pub_len + pqc_pk_len;
+    uint8_t *sh_pkt = malloc(total_sh);
+    if (!sh_pkt) {
+        free(q_pk); free(q_sk); if (kem) OQS_KEM_free(kem);
+        if (srv_priv) EVP_PKEY_free(srv_priv);
+        close(fd); return NULL;
+    }
+    memcpy(sh_pkt, &sh_hdr, sizeof(sh_hdr));
+    memcpy(sh_pkt + sizeof(sh_hdr), &sh_meta, sizeof(sh_meta));
+    size_t sh_off = sizeof(sh_hdr) + sizeof(sh_meta);
+    if (srv_pub_len > 0) {
+        memcpy(sh_pkt + sh_off, srv_pub_buf, srv_pub_len);
+        sh_off += srv_pub_len;
+    }
+    if (pqc_pk_len > 0) {
+        memcpy(sh_pkt + sh_off, q_pk, pqc_pk_len);
+    }
+    int sh_rc = send_all(fd, sh_pkt, total_sh);
+    free(sh_pkt);
+
+    free(q_pk); q_pk = NULL;
+    if (srv_priv) { EVP_PKEY_free(srv_priv); srv_priv = NULL; }
+    if (sh_rc != 0) {
+        free(q_sk); if (kem) OQS_KEM_free(kem);
+        close(fd); return NULL;
+    }
+
+    /* Receive PQC Ciphertext (if hybrid / pure_quantum) */
+    uint8_t q_secret[64] = {0};
+    size_t q_secret_len = 0;
+
+    if (combo->profile == PROFILE_HYBRID || combo->profile == PROFILE_PURE_QUANTUM) {
+        WireHeader ct_hdr;
+        if (recv_all(fd, &ct_hdr, sizeof(ct_hdr)) != 0 ||
+            ntohl(ct_hdr.magic) != WIRE_MAGIC ||
+            ntohs(ct_hdr.msg_type) != WIRE_MSG_PQC_CIPHERTEXT) {
+            free(q_sk); if (kem) OQS_KEM_free(kem);
+            close(fd); return NULL;
+        }
+
+        uint32_t ct_len = ntohl(ct_hdr.payload_len);
+        uint8_t *ct = malloc(ct_len);
+        if (!ct || recv_all(fd, ct, ct_len) != 0) {
+            free(ct); free(q_sk); if (kem) OQS_KEM_free(kem);
+            close(fd); return NULL;
+        }
+
+        if (ct_len == kem->length_ciphertext) {
+            uint8_t *ss = malloc(kem->length_shared_secret);
+            if (ss && OQS_KEM_decaps(kem, ss, ct, q_sk) == OQS_SUCCESS) {
+                q_secret_len = kem->length_shared_secret;
+                memcpy(q_secret, ss, q_secret_len);
+            }
+            free(ss);
+        }
+        free(ct);
+        free(q_sk);
+        OQS_KEM_free(kem);
+    }
+
+    /* Key Derivation */
+    uint8_t ikm[MAX_IKM_BYTES];
+    size_t ikm_len = 0;
+    if (c_secret_len > 0) {
+        memcpy(ikm + ikm_len, c_secret, c_secret_len);
+        ikm_len += c_secret_len;
+    }
+    if (q_secret_len > 0) {
+        memcpy(ikm + ikm_len, q_secret, q_secret_len);
+        ikm_len += q_secret_len;
+    }
+
+    uint8_t session_key[32];
+    const uint8_t *info = (const uint8_t *)combo->info;
+    size_t info_len = strlen(combo->info);
+
+    if (strcmp(kdf_type, "blake3") == 0) {
+        crypto_blake3_kdf(ikm, ikm_len, info, info_len, session_key);
+    } else {
+        const uint8_t *salt = (const uint8_t *)STATIC_SALT;
+        crypto_hkdf_sha256(ikm, ikm_len, salt, strlen(STATIC_SALT),
+                           info, info_len, session_key);
+    }
+
+    struct timespec t1;
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    double elapsed_ms = (t1.tv_sec - t0.tv_sec) * 1000.0 +
+                        (t1.tv_nsec - t0.tv_nsec) / 1e6;
+
+    /* Send ServerFinished in a single contiguous write */
+    uint8_t fin_pkt[sizeof(WireHeader) + 1];
+    WireHeader fin_hdr = {
+        .magic       = htonl(WIRE_MAGIC),
+        .msg_type    = htons(WIRE_MSG_SERVER_FINISHED),
+        .combo_id    = htons(combo->id),
+        .payload_len = htonl(1)
+    };
+    memcpy(fin_pkt, &fin_hdr, sizeof(fin_hdr));
+    fin_pkt[sizeof(fin_hdr)] = 0;
+    send_all(fd, fin_pkt, sizeof(fin_pkt));
+
+    printf("  [✔] %s | route=%-10s | mode=%-10s | %.3f ms (wire: binary)\n",
+           combo->label, route_name(route), dmode_str(dmode), elapsed_ms);
+
+    close(fd);
+    return NULL;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  * Client handler — executed in a dedicated pthread per connection
  * ═══════════════════════════════════════════════════════════════════ */
 
@@ -136,7 +339,19 @@ static void *handle_client(void *arg)
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
-    /* ──── Step 1: Receive ProfileSelect ──── */
+    /* ──── Binary Wire Protocol Detection ──── */
+    uint32_t peek_magic = 0;
+    ssize_t peek_n = recv(fd, &peek_magic, sizeof(peek_magic), MSG_PEEK);
+    if (peek_n == (ssize_t)sizeof(peek_magic) && ntohl(peek_magic) == WIRE_MAGIC) {
+        WireHeader hdr;
+        if (recv_all(fd, &hdr, sizeof(hdr)) == 0) {
+            return handle_client_binary(fd, &hdr, t0);
+        }
+        close(fd);
+        return NULL;
+    }
+
+    /* ──── Legacy JSON Wire Protocol Fallback ──── */
     cJSON *sel = recv_json_line(fd);
     if (!sel) { close(fd); return NULL; }
 
@@ -160,14 +375,12 @@ static void *handle_client(void *arg)
         return NULL;
     }
 
-    /* Determine final dispatch route */
-    DispatchRoute route;
-    if (dmode == DMODE_FORCE_SEQUENTIAL)
-        route = ROUTE_SEQUENTIAL;
-    else if (dmode == DMODE_FORCE_PARALLEL)
-        route = ROUTE_PARALLEL;
-    else
-        route = adaptive_dispatch(combo);
+    /*
+     * Server Execution Policy: Always Sequential Execution.
+     * All cryptographic operations (ECDH keygen/derive, ML-KEM keygen/decaps)
+     * run inline on the server handler thread.
+     */
+    DispatchRoute route = ROUTE_SEQUENTIAL;
 
     /* Decode optional salt */
     uint8_t salt_buf[128] = {0};
@@ -175,23 +388,18 @@ static void *handle_client(void *arg)
     if (salt_b64 && strlen(salt_b64) > 0)
         salt_len = b64_decode(salt_b64, salt_buf, sizeof(salt_buf));
 
-    /* ──── PQC Keygen (parallel with ECDH for hybrid/quantum) ──── */
-    pthread_t pqc_th;
-    int pqc_spawned = 0;
+    /* ──── PQC Keygen (always sequential on server) ──── */
     PQCKeygenArgs pqc_args = { .pqc_name = combo->pqc_name,
                                .kem = NULL, .q_pk = NULL, .q_sk = NULL,
                                .success = 0 };
 
     if (combo->profile == PROFILE_HYBRID ||
         combo->profile == PROFILE_PURE_QUANTUM) {
-        if (route == ROUTE_PARALLEL) {
-            /* On parallel route, spawn KEM keygen on separate thread */
-            if (pthread_create(&pqc_th, NULL, pqc_keygen_worker, &pqc_args) == 0)
-                pqc_spawned = 1;
-        }
-        if (!pqc_spawned) {
-            /* Sequential: keygen inline */
-            pqc_keygen_worker(&pqc_args);
+        pqc_keygen_worker(&pqc_args);
+        if (!pqc_args.success) {
+            free(pqc_args.q_pk); free(pqc_args.q_sk);
+            if (pqc_args.kem) OQS_KEM_free(pqc_args.kem);
+            close(fd); return NULL;
         }
     }
 
@@ -208,11 +416,8 @@ static void *handle_client(void *arg)
         /* Read ClientHello */
         cJSON *hello = recv_json_line(fd);
         if (!hello) {
-            if (pqc_spawned) {
-                pthread_join(pqc_th, NULL);
-                free(pqc_args.q_pk); free(pqc_args.q_sk);
-                if (pqc_args.kem) OQS_KEM_free(pqc_args.kem);
-            }
+            free(pqc_args.q_pk); free(pqc_args.q_sk);
+            if (pqc_args.kem) OQS_KEM_free(pqc_args.kem);
             close(fd); return NULL;
         }
 
@@ -222,22 +427,16 @@ static void *handle_client(void *arg)
         cJSON_Delete(hello);
 
         if (cli_pub_len <= 0) {
-            if (pqc_spawned) {
-                pthread_join(pqc_th, NULL);
-                free(pqc_args.q_pk); free(pqc_args.q_sk);
-                if (pqc_args.kem) OQS_KEM_free(pqc_args.kem);
-            }
+            free(pqc_args.q_pk); free(pqc_args.q_sk);
+            if (pqc_args.kem) OQS_KEM_free(pqc_args.kem);
             close(fd); return NULL;
         }
 
-        /* Generate server ECDH keypair (Core 0 on parallel path) */
+        /* Generate server ECDH keypair */
         srv_priv = crypto_generate_keypair(combo->classical_curve);
         if (!srv_priv) {
-            if (pqc_spawned) {
-                pthread_join(pqc_th, NULL);
-                free(pqc_args.q_pk); free(pqc_args.q_sk);
-                if (pqc_args.kem) OQS_KEM_free(pqc_args.kem);
-            }
+            free(pqc_args.q_pk); free(pqc_args.q_sk);
+            if (pqc_args.kem) OQS_KEM_free(pqc_args.kem);
             close(fd); return NULL;
         }
 
@@ -259,19 +458,6 @@ static void *handle_client(void *arg)
             crypto_derive_ecdh_secret(srv_priv, cli_pub, c_secret, &c_secret_len);
             EVP_PKEY_free(cli_pub);
         }
-    }
-
-    /* Wait for PQC keygen if it was spawned */
-    if (pqc_spawned) {
-        pthread_join(pqc_th, NULL);
-    }
-
-    if ((combo->profile == PROFILE_HYBRID ||
-         combo->profile == PROFILE_PURE_QUANTUM) && !pqc_args.success) {
-        if (srv_priv) EVP_PKEY_free(srv_priv);
-        free(pqc_args.q_pk); free(pqc_args.q_sk);
-        if (pqc_args.kem) OQS_KEM_free(pqc_args.kem);
-        close(fd); return NULL;
     }
 
     /* ──── Step 3: Transmit key material + PQC decapsulation ──── */
@@ -442,6 +628,9 @@ int main(void)
         socklen_t cli_len = sizeof(cli_addr);
         int cli_fd = accept(server_fd, (struct sockaddr *)&cli_addr, &cli_len);
         if (cli_fd < 0) { perror("accept"); continue; }
+
+        int nodelay = 1;
+        setsockopt(cli_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
         int *fd_ptr = malloc(sizeof(int));
         *fd_ptr = cli_fd;

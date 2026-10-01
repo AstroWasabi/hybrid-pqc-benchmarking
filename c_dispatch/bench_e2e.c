@@ -4,11 +4,13 @@
  * Adaptive Dispatch Runtime — Network Handshake Edition
  *
  * Runs real TCP handshakes against the dispatch server, measuring
- * client-side crypto latency across three dispatch modes:
+ * client-side crypto latency across three client dispatch modes:
  *
- *   1. Strict_Sequential  — "sequential" dispatch on both client & server
- *   2. Strict_Parallel    — "parallel" dispatch on both client & server
- *   3. Adaptive_Switch    — "auto" dispatch (router decides per-handshake)
+ *   1. Strict_Sequential  — sequential execution on client (server: sequential)
+ *   2. Strict_Parallel    — parallel execution on client (server: sequential)
+ *   3. Adaptive_Switch    — auto dispatch on client (router decides per-handshake)
+ *
+ * Server Execution: Always Sequential
  *
  * Timing: clock_gettime(CLOCK_MONOTONIC) — starts AFTER TCP connect,
  *         ends after receiving ServerFinished.
@@ -42,6 +44,8 @@ double execute_dispatch_handshake(const char *host,
                                   const char *kdf_type,
                                   const char *dispatch_mode,
                                   DispatchRoute local_route);
+int  client_worker_init(void);
+void client_worker_shutdown(void);
 
 /* ═══════════════════════════════════════════════════════════════════
  * Configuration
@@ -71,15 +75,11 @@ static const char *mode_label(BenchMode m)
     }
 }
 
-/* dispatch_mode string sent to the server */
+/* dispatch_mode string sent to the server — server always executes sequentially */
 static const char *mode_wire(BenchMode m)
 {
-    switch (m) {
-        case MODE_STRICT_SEQUENTIAL: return "sequential";
-        case MODE_STRICT_PARALLEL:   return "parallel";
-        case MODE_ADAPTIVE_SWITCH:   return "auto";
-        default:                     return "auto";
-    }
+    (void)m;
+    return "sequential";
 }
 
 /* local route used by the client */
@@ -209,6 +209,7 @@ int main(int argc, char *argv[])
     printf("═══════════════════════════════════════════════════════════════\n");
     printf("  End-to-End TLS 1.3 Hybrid PQC Benchmark\n");
     printf("  Adaptive Dispatch Runtime — Network Handshake Edition\n");
+    printf("  Server Execution: Always Sequential\n");
     printf("═══════════════════════════════════════════════════════════════\n");
     printf("  Server:     %s:%d\n", g_host, SERVER_PORT);
     printf("  Iterations: %d\n", g_runs);
@@ -217,6 +218,7 @@ int main(int argc, char *argv[])
 
     /* Boot-time profiler (for adaptive routing decisions) */
     host_profile_init();
+    client_worker_init();
     const HostProfile *hp = get_host_profile();
     printf("[Client] Hostname: %s | Cores: %d | VM: %s\n\n",
            hp->hostname, hp->logical_cores,
@@ -296,6 +298,7 @@ int main(int argc, char *argv[])
 
     export_results("e2e_benchmark_results.json", all_results, result_idx);
 
+    client_worker_shutdown();
     free(all_results);
     free(samples);
 

@@ -1,4 +1,7 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +14,7 @@
 #include "include/engine.h"
 #include "include/dispatcher.h"
 #include "include/telemetry.h"
+#include "include/algo_config.h"
 
 static double ts_diff_ms(struct timespec a, struct timespec b) {
     return (b.tv_sec - a.tv_sec) * 1000.0 + (b.tv_nsec - a.tv_nsec) / 1000000.0;
@@ -21,9 +25,13 @@ static int cmp_double(const void *a, const void *b) {
     return (da > db) - (da < db);
 }
 
-int main() {
-    boot_hardware_profiler("host_profile.json");
-    engine_init();
+int main(void) {
+    host_profile_init();
+    host_profile_export_json("host_profile.json");
+    if (engine_init() != 0) {
+        fprintf(stderr, "Failed to initialize crypto engine\n");
+        return 1;
+    }
 
     printf("\n═══════════════════════════════════════════════════════════════\n");
     printf("  High-Security Level 5 Hybrid Benchmark: Sequential vs Parallel\n");
@@ -31,35 +39,46 @@ int main() {
 
     const AlgoCombo level5_combos[] = {
         {
-            .combo_id        = 101,
+            .id              = 101,
+            .label           = "Hybrid: SecP384r1 + ML-KEM-1024 (NIST Level 5)",
             .profile         = PROFILE_HYBRID,
             .classical_curve = CURVE_P384,
-            .pqc_name        = "ML-KEM-1024",
-            .display_name    = "Hybrid: SecP384r1 + ML-KEM-1024 (NIST Level 5)"
+            .pqc_alg         = PQC_MLKEM_1024,
+            .pqc_name        = OQS_MLKEM_1024_NAME,
+            .info            = "L5-P384-MLKEM1024"
         },
         {
-            .combo_id        = 102,
+            .id              = 102,
+            .label           = "Hybrid: SecP384r1 + FrodoKEM-1344-AES (Conservative L5)",
             .profile         = PROFILE_HYBRID,
-            .classical_curve = CURVE_P521,
-            .pqc_name        = "ML-KEM-1024",
-            .display_name    = "Hybrid: SecP521r1 + ML-KEM-1024 (NIST Level 5)"
+            .classical_curve = CURVE_P384,
+            .pqc_alg         = PQC_FRODOKEM_1344,
+            .pqc_name        = OQS_FRODOKEM_1344_NAME,
+            .info            = "L5-P384-Frodo1344"
         },
         {
-            .combo_id        = 103,
+            .id              = 103,
+            .label           = "Hybrid: SecP384r1 + BIKE-L5 (Code-Based L5)",
             .profile         = PROFILE_HYBRID,
-            .classical_curve = CURVE_P521,
-            .pqc_name        = "FrodoKEM-1344-AES",
-            .display_name    = "Hybrid: SecP521r1 + FrodoKEM-1344-AES (Conservative L5)"
+            .classical_curve = CURVE_P384,
+            .pqc_alg         = PQC_BIKE_L5,
+            .pqc_name        = OQS_BIKE_L5_NAME,
+            .info            = "L5-P384-BIKEL5"
         }
     };
 
     int n_combos = sizeof(level5_combos) / sizeof(level5_combos[0]);
     int runs = 500;
     double *times = malloc(runs * sizeof(double));
+    if (!times) {
+        fprintf(stderr, "Failed to allocate memory for benchmark times\n");
+        engine_shutdown();
+        return 1;
+    }
 
     for (int c = 0; c < n_combos; c++) {
         const AlgoCombo *combo = &level5_combos[c];
-        printf("\n─── %s ───\n", combo->display_name);
+        printf("\n─── %s ───\n", combo->label);
 
         for (int m = 0; m < 3; m++) {
             const char *mode_name = (m == 0) ? "Strict_Sequential" :
@@ -72,17 +91,16 @@ int main() {
                 clock_gettime(CLOCK_MONOTONIC, &t0);
 
                 if (m == 0) {
-                    execute_sequential(combo, &res);
+                    execute_sequential(combo, ROLE_SERVER, &res);
                 } else if (m == 1) {
-                    execute_parallel(combo, &res);
+                    execute_parallel_optimized(combo, ROLE_SERVER, &res);
                 } else {
-                    dispatch_execute(combo, &res);
+                    dispatch_execute(combo, ROLE_SERVER, &res);
                 }
 
                 clock_gettime(CLOCK_MONOTONIC, &t1);
                 times[r] = ts_diff_ms(t0, t1);
                 sum += times[r];
-                crypto_result_free(&res);
             }
 
             qsort(times, runs, sizeof(double), cmp_double);
