@@ -220,8 +220,9 @@ int main(int argc, char *argv[])
     host_profile_init();
     client_worker_init();
     const HostProfile *hp = get_host_profile();
-    printf("[Client] Hostname: %s | Cores: %d | VM: %s\n\n",
-           hp->hostname, hp->logical_cores,
+    printf("[Client] Hostname: %s | Cores: %d logical, %d physical | Sync Latency: %.2f µs | Load: %.2f | VM: %s\n\n",
+           hp->hostname, hp->logical_cores, hp->physical_cores,
+           (double)hp->sync_overhead_ns / 1000.0, hp->load_1min,
            hp->is_virtualized ? "YES" : "NO");
 
     /* Collect hybrid cipher suites */

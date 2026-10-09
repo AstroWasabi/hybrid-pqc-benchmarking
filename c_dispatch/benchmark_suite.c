@@ -243,12 +243,23 @@ int main(int argc, char *argv[])
     host_profile_export_json("host_profile.json");
 
     const HostProfile *hp = get_host_profile();
+    char feat_buf[64], sync_buf[64], load_buf[64];
+    snprintf(feat_buf, sizeof(feat_buf), "AVX2=%s AVX-512=%s",
+             hp->has_avx2 ? "YES" : "NO", hp->has_avx512 ? "YES" : "NO");
+    snprintf(sync_buf, sizeof(sync_buf), "%.2f µs (measured)",
+             (double)hp->sync_overhead_ns / 1000.0);
+    snprintf(load_buf, sizeof(load_buf), "%.2f (%.1f%% per core)",
+             hp->load_1min, hp->load_per_core * 100.0);
+
     printf("┌─── Boot-Time Hardware Profile ────────────────────────────┐\n");
     printf("│  Hostname:       %-40s│\n", hp->hostname);
     printf("│  Vendor:         %-40s│\n", hp->sys_vendor);
     printf("│  Virtualized:    %-40s│\n",
            hp->is_virtualized ? "YES (hypervisor detected)" : "NO (bare metal)");
-    printf("│  Logical Cores:  %-40d│\n", hp->logical_cores);
+    printf("│  Cores:          %d logical / %-26d│\n", hp->logical_cores, hp->physical_cores);
+    printf("│  CPU Features:   %-40s│\n", feat_buf);
+    printf("│  Sync Latency:   %-40s│\n", sync_buf);
+    printf("│  System Load:    %-40s│\n", load_buf);
     printf("│  Timestamp:      %-40s│\n", hp->boot_timestamp);
     printf("│  Exported:       %-40s│\n", "host_profile.json");
     printf("└───────────────────────────────────────────────────────────┘\n");

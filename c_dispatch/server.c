@@ -582,9 +582,15 @@ int main(void)
     host_profile_export_json("host_profile.json");
 
     const HostProfile *hp = get_host_profile();
-    printf("[Boot] Hostname: %s | Vendor: %s | Cores: %d | VM: %s\n",
-           hp->hostname, hp->sys_vendor, hp->logical_cores,
+    printf("[Boot] Hostname: %s | Vendor: %s | Cores: %d logical, %d physical | VM: %s\n",
+           hp->hostname, hp->sys_vendor, hp->logical_cores, hp->physical_cores,
            hp->is_virtualized ? "YES" : "NO");
+    printf("[Boot] CPU Features: AVX2=%s AVX-512=%s | Inter-Thread Sync Latency: %.2f µs\n",
+           hp->has_avx2 ? "YES" : "NO", hp->has_avx512 ? "YES" : "NO",
+           (double)hp->sync_overhead_ns / 1000.0);
+    printf("[Boot] Initial Load: %.2f (%.1f%% / core) | Congested: %s\n",
+           hp->load_1min, hp->load_per_core * 100.0,
+           hp->is_congested ? "YES" : "NO");
     printf("[Boot] Exported → host_profile.json\n\n");
 
     /* Initialize execution engine */

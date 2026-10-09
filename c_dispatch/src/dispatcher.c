@@ -23,34 +23,11 @@
  * ═══════════════════════════════════════════════════════════════════ */
 
 DispatchRoute adaptive_dispatch(const AlgoCombo *combo) {
+  /* Refresh live dynamic metrics (rate-limited / cached to <= 100ms) */
+  telemetry_refresh_dynamic();
   const HostProfile *hp = get_host_profile();
 
-  /* ── PRE-EXISTING RULES (COMMENTED OUT): ──
-  // Rule 1: Non-hybrid profiles have no parallelism benefit
-  if (combo->profile != PROFILE_HYBRID || combo->pqc_alg == PQC_NONE ||
-      combo->classical_curve == CURVE_NONE)
-    return ROUTE_SEQUENTIAL;
-
-  // Rule 2: Virtualised environment with small core count (≤2 cores)
-  if (hp->is_virtualized && hp->logical_cores <= 2)
-    return ROUTE_SEQUENTIAL;
-
-  // Rule 3: High-core bare-metal host (≥8 cores, bare metal)
-  if (!hp->is_virtualized && hp->logical_cores >= 8)
-    return ROUTE_PARALLEL;
-
-  // Rule 4: Lightweight cipher suite on constrained or virtualized hosts
-  if (combo->classical_curve == CURVE_X25519 && combo->pqc_alg == PQC_MLKEM_768)
-    return ROUTE_SEQUENTIAL;
-
-  // Rule 5: Sufficient physical cores (≥3 cores) + medium/heavy hybrid
-  if (hp->logical_cores > 2)
-    return ROUTE_PARALLEL;
-
-  return ROUTE_SEQUENTIAL;
-  ── END PRE-EXISTING RULES ── */
-
-  /* ── REARRANGED OPTIMAL ROUTING RULES: ── */
+  /* ── OPTIMAL ADAPTIVE ROUTING RULES: ── */
 
   /* Rule 1: Non-hybrid profiles have no concurrency benefit */
   if (combo->profile != PROFILE_HYBRID || combo->pqc_alg == PQC_NONE ||
@@ -65,7 +42,20 @@ DispatchRoute adaptive_dispatch(const AlgoCombo *combo) {
   if (hp->is_virtualized && hp->logical_cores <= 2)
     return ROUTE_SEQUENTIAL;
 
-  /* Rule 3: Lightweight hybrid suite (X25519 + ML-KEM-768)
+  /* Rule 3: Dynamic CPU Contention / High Load Backoff
+   * If the host's run-queue load per core exceeds 80%, worker threads
+   * face preemption by the OS scheduler. Falling back to Sequential
+   * prevents p99 tail latency spikes and context switch thrashing. */
+  if (hp->is_congested || hp->load_per_core >= 0.80)
+    return ROUTE_SEQUENTIAL;
+
+  /* Rule 4: Micro-Architectural Inter-Thread Sync Latency Threshold
+   * If measured boot-time thread wake latency exceeds 80 µs (e.g. noisy
+   * neighbor or poor hypervisor scheduling), concurrency gains are negated. */
+  if (hp->sync_overhead_ns > 80000ULL)
+    return ROUTE_SEQUENTIAL;
+
+  /* Rule 5: Lightweight hybrid suite (X25519 + ML-KEM-768)
    * The maximum theoretical crypto savings is only ~32 µs (X25519 derive duration).
    * In real-world network execution, inter-core synchronization, condition variable
    * signaling, and cross-core cache line transfers exceed this savings (~45 µs tax).
@@ -73,7 +63,7 @@ DispatchRoute adaptive_dispatch(const AlgoCombo *combo) {
   if (combo->classical_curve == CURVE_X25519 && combo->pqc_alg == PQC_MLKEM_768)
     return ROUTE_SEQUENTIAL;
 
-  /* Rule 4: Medium and Heavy hybrid suites on multi-core hosts (>= 2 cores)
+  /* Rule 6: Medium and Heavy hybrid suites on multi-core hosts (>= 2 cores)
    * For SecP256r1, SecP384r1, ML-KEM-1024, FrodoKEM-1344, and BIKE-L5,
    * the crypto overlap (150 µs to 1.6 ms) vastly exceeds inter-core sync overhead.
    * Parallel execution yields up to 40% latency reduction and eliminates p99 tail jitter. */
