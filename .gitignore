@@ -34,3 +34,7 @@ c_dispatch/*.log
 c_dispatch/host_profile.json
 .clangd
 compile_commands.json
+
+# Worktrees
+.worktrees/
+
