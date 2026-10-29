@@ -35,8 +35,12 @@
 #include "include/engine.h"
 #include "include/network_utils.h"
 #include "include/telemetry.h"
+#include "include/key_pool.h"
 
 #include <oqs/oqs.h>
+
+int g_client_use_key_pool = 0;
+double g_last_ch_prep_ms = 0.0;
 
 #define SERVER_PORT  4444
 #define STATIC_SALT  "IEICE-Kyoto-Conference-2026"
@@ -426,15 +430,23 @@ double execute_dispatch_handshake(const char *host,
     uint8_t pub_buf[MAX_PUB_KEY_BYTES];
     size_t pub_len = 0;
 
+    double t_ch0 = now_ms();
     if (combo->profile == PROFILE_HYBRID || combo->profile == PROFILE_PURE_CLASSICAL) {
-        c_priv = crypto_generate_keypair(combo->classical_curve);
-        if (!c_priv) { close(fd); return -1.0; }
+        if (g_client_use_key_pool) {
+            if (key_pool_pop(combo->classical_curve, &c_priv, pub_buf, &pub_len) != 0 || !c_priv) {
+                close(fd); return -1.0;
+            }
+        } else {
+            c_priv = crypto_generate_keypair(combo->classical_curve);
+            if (!c_priv) { close(fd); return -1.0; }
 
-        if (combo->classical_curve == CURVE_X25519)
-            crypto_export_x25519_pub_raw(c_priv, pub_buf, &pub_len);
-        else
-            crypto_export_ec_pub_der(c_priv, pub_buf, &pub_len);
+            if (combo->classical_curve == CURVE_X25519)
+                crypto_export_x25519_pub_raw(c_priv, pub_buf, &pub_len);
+            else
+                crypto_export_ec_pub_der(c_priv, pub_buf, &pub_len);
+        }
     }
+    g_last_ch_prep_ms = now_ms() - t_ch0;
 
     /* Send Binary ClientHello in a single contiguous write to prevent TCP delayed-ACK */
     uint8_t kdf_code = (strcmp(kdf_type, "blake3") == 0) ? 1 : 0;

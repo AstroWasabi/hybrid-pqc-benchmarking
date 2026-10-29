@@ -86,7 +86,8 @@ DISPATCH_SRCS := src/telemetry.c \
                  src/engine.c \
                  src/dispatcher.c \
                  src/crypto_engine.c \
-                 src/network_utils.c
+                 src/network_utils.c \
+                 src/key_pool.c
 
 DISPATCH_OBJS := $(DISPATCH_SRCS:.c=.o)
 
@@ -130,8 +131,11 @@ bench_level5_demo: bench_level5_demo.o $(ALL_COMMON)
 bench_prims: bench_prims.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
+test_key_pool: test_key_pool.o $(ALL_COMMON)
+	$(CC) -o $@ $^ $(LDFLAGS)
+
 clean:
-	rm -f server bench_e2e benchmark_suite bench_level5 bench_level5_demo bench_prims
+	rm -f server bench_e2e benchmark_suite bench_level5 bench_level5_demo bench_prims test_key_pool
 	rm -f *.o src/*.o $(BLAKE3_DIR)/*.o $(CJSON_DIR)/*.o
 	rm -f host_profile.json benchmark_results.json e2e_benchmark_results.json
 	rm -f benchmark_output.log e2e_output.log server.log

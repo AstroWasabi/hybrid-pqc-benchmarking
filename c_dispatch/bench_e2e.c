@@ -35,10 +35,13 @@
 #include "include/dispatcher.h"
 #include "include/engine.h"
 #include "include/telemetry.h"
+#include "include/key_pool.h"
 
 #define SERVER_PORT 4444
 
 /* Defined in client.c */
+extern int g_client_use_key_pool;
+extern double g_last_ch_prep_ms;
 double execute_dispatch_handshake(const char *host,
                                   const AlgoCombo *combo,
                                   const char *kdf_type,
@@ -51,9 +54,10 @@ void client_worker_shutdown(void);
  * Configuration
  * ═══════════════════════════════════════════════════════════════════ */
 
-static const char *g_host    = "127.0.0.1";
-static int         g_runs    = 1000;
-static const char *g_kdf     = "sha256";
+static const char *g_host        = "127.0.0.1";
+static int         g_runs        = 1000;
+static const char *g_kdf         = "sha256";
+static int         g_precompute  = 0;
 
 /* ═══════════════════════════════════════════════════════════════════
  * Benchmark modes
@@ -194,6 +198,8 @@ static void parse_args(int argc, char *argv[])
             g_runs = atoi(argv[++i]);
         else if (strcmp(argv[i], "--kdf") == 0 && i + 1 < argc)
             g_kdf = argv[++i];
+        else if (strcmp(argv[i], "--precompute") == 0)
+            g_precompute = 1;
     }
 }
 
@@ -214,7 +220,18 @@ int main(int argc, char *argv[])
     printf("  Server:     %s:%d\n", g_host, SERVER_PORT);
     printf("  Iterations: %d\n", g_runs);
     printf("  KDF:        %s\n", g_kdf);
+    printf("  Key Pool:   %s\n", g_precompute ? "ENABLED (pre-computed ephemeral key pool)" : "DISABLED (on-demand generation)");
     printf("═══════════════════════════════════════════════════════════════\n\n");
+
+    /* Initialize pre-computed key pool if requested */
+    if (g_precompute) {
+        if (key_pool_init(32) != 0) {
+            fprintf(stderr, "[!] Failed to initialize client key pool\n");
+            return 1;
+        }
+        g_client_use_key_pool = 1;
+        printf("[Client] Pre-computed key pool active (capacity: 32 per curve)\n");
+    }
 
     /* Boot-time profiler (for adaptive routing decisions) */
     host_profile_init();
@@ -299,6 +316,9 @@ int main(int argc, char *argv[])
 
     export_results("e2e_benchmark_results.json", all_results, result_idx);
 
+    if (g_precompute) {
+        key_pool_destroy();
+    }
     client_worker_shutdown();
     free(all_results);
     free(samples);
